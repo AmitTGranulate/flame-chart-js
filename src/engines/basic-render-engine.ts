@@ -1,15 +1,35 @@
 import { EventEmitter } from 'events';
-import { mergeObjects } from '../utils';
+import { addAlpha, mergeObjects } from '../utils';
 import { Dots, Mouse, RectRenderQueue, Stroke, Text, TooltipField } from '../types';
 import { OffscreenRenderEngine } from './offscreen-render-engine';
 import { RenderEngine } from './render-engine';
+import { FRAME_FLAG_IS_THIRD_PARTY, FRAME_FLAG_IS_HIGHLIGHTED, FRAME_FLAG_IS_INACTIVE } from './../const.js';
 
 // eslint-disable-next-line prettier/prettier -- prettier complains about escaping of the " character
 const allChars = 'QWERTYUIOPASDFGHJKLZXCVBNMqwertyuiopasdfghjklzxcvbnm1234567890_-+()[]{}\\/|\'";:.,?~';
-
+const nodeBorderRadius = 3;
 const checkSafari = () => {
     const ua = navigator.userAgent.toLowerCase();
     return ua.includes('safari') ? !ua.includes('chrome') : false;
+};
+declare global {
+    interface CanvasRenderingContext2D {
+        roundRect(x, y, w, h, r): any;
+    }
+}
+
+CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+    if (w < 2 * r) r = w / 2;
+    if (h < 2 * r) r = h / 2;
+    this.beginPath();
+    this.moveTo(x + r, y);
+    this.arcTo(x + w, y, x + w, y + h, r);
+    this.arcTo(x + w, y + h, x, y + h, r);
+    this.arcTo(x, y + h, x, y, r);
+    this.arcTo(x, y, x + w, y, r);
+    this.closePath();
+
+    return this;
 };
 
 const getPixelRatio = (ctx) => {
@@ -30,6 +50,7 @@ export type RenderOptions = {
         | ((data: any, renderEngine: RenderEngine | OffscreenRenderEngine, mouse: Mouse | null) => boolean | void)
         | boolean;
     timeUnits: string;
+    inverted: boolean;
 };
 
 export type RenderStyles = {
@@ -38,6 +59,7 @@ export type RenderStyles = {
     backgroundColor: string;
     font: string;
     fontColor: string;
+    fontColorInactive: string;
     tooltipHeaderFontColor: string;
     tooltipBodyFontColor: string;
     tooltipBackgroundColor: string;
@@ -55,6 +77,7 @@ export type RenderSettings = {
 export const defaultRenderSettings: RenderOptions = {
     tooltip: undefined,
     timeUnits: 'ms',
+    inverted: false,
 };
 
 export const defaultRenderStyles: RenderStyles = {
@@ -63,6 +86,7 @@ export const defaultRenderStyles: RenderStyles = {
     backgroundColor: 'white',
     font: `10px sans-serif`,
     fontColor: 'black',
+    fontColorInactive: 'white',
     tooltipHeaderFontColor: 'black',
     tooltipBodyFontColor: '#688f45',
     tooltipBackgroundColor: 'white',
@@ -81,6 +105,7 @@ export class BasicRenderEngine extends EventEmitter {
     pixelRatio: number;
     options: RenderOptions;
     timeUnits;
+    inverted;
     styles: RenderStyles;
     blockPaddingLeftRight: number;
     blockHeight: number;
@@ -121,6 +146,7 @@ export class BasicRenderEngine extends EventEmitter {
         this.styles = mergeObjects(defaultRenderStyles, styles);
 
         this.timeUnits = this.options.timeUnits;
+        this.inverted = this.options.inverted;
 
         this.blockHeight = this.styles.blockHeight;
         this.ctx.font = this.styles.font;
@@ -167,17 +193,75 @@ export class BasicRenderEngine extends EventEmitter {
         }
     }
 
-    fillRect(x: number, y: number, w: number, h: number) {
-        this.ctx.fillRect(x, y, w, h);
+    drawLine(x1: number, y1: number, x2: number, y2: number, color: string, width: number) {
+        this.ctx.strokeStyle = color;
+        this.ctx.beginPath();
+        this.ctx.lineWidth = width;
+        this.ctx.lineCap = 'round';
+        this.ctx.moveTo(x1, y1);
+        this.ctx.lineTo(x2, y2);
+        this.ctx.stroke();
+        this.ctx.closePath();
     }
 
-    fillText(text: string, x: number, y) {
+    drawLines(x: number, y: number, w: number, h: number) {
+        const thickness = 1;
+        const gap = 15;
+        let currentX = x + gap;
+        const lineColor = 'rgba(255, 255, 255, 0.5)';
+
+        if (w <= 5) {
+            this.drawLine(x + w, y, x, y + h, lineColor, thickness);
+        }
+        //tiny first and last lines
+        else if (w > 5) {
+            this.drawLine(x + 5, y, x, y + 10, lineColor, thickness);
+            this.drawLine(x + w, y + 10, x + w - 5, y + h, lineColor, thickness);
+        }
+        if (currentX < x + w) {
+            //first regular line
+            this.drawLine(currentX, y, currentX - 10, y + h, lineColor, thickness);
+            currentX = currentX + gap;
+
+            //rest of the lines
+            while (currentX < x + w) {
+                this.drawLine(currentX, y, currentX - 10, y + h, lineColor, thickness);
+                currentX = currentX + gap;
+            }
+        }
+    }
+
+    fillRect(x: number, y: number, w: number, h: number) {
+        this.ctx.roundRect(x, y, w, h, nodeBorderRadius).fill();
+    }
+
+    fillText(text: string, x: number, y: number) {
         this.ctx.fillText(text, x, y);
     }
 
-    renderBlock(color: string, x: number, y: number, w: number) {
+    renderBlock(originalColor: string, x: number, y: number, w: number, flags = 0) {
+        const color = flags & FRAME_FLAG_IS_INACTIVE ? addAlpha(originalColor, 0.2) : originalColor;
         this.setCtxColor(color);
-        this.ctx.fillRect(x, y, w, this.blockHeight);
+
+        // shadows styles should be applied BEFORE filling the rectangle
+        if (flags & FRAME_FLAG_IS_HIGHLIGHTED) {
+            this.ctx.shadowOffsetX = 0;
+            this.ctx.shadowOffsetY = 3;
+            this.ctx.shadowBlur = 15;
+            this.ctx.shadowColor = 'rgba(21, 24, 34, 0.3)';
+        } else {
+            this.ctx.shadowOffsetX = 0;
+            this.ctx.shadowOffsetY = 0;
+            this.ctx.shadowBlur = 0;
+            this.ctx.shadowColor = '';
+        }
+
+        // fillRect should be AFTER setting the shadows
+        this.fillRect(x, y, w, this.blockHeight);
+
+        if (flags & FRAME_FLAG_IS_THIRD_PARTY) {
+            this.drawLines(x, y, w, this.blockHeight);
+        }
     }
 
     renderStroke(color: string, x: number, y: number, w: number, h: number) {
@@ -186,11 +270,33 @@ export class BasicRenderEngine extends EventEmitter {
         this.ctx.strokeRect(x, y, w, h);
     }
 
+    renderHoverStroke(color, x, y, w, h) {
+        this.setStrokeColor(color);
+        this.ctx.setLineDash([]);
+        this.ctx.lineWidth = 4;
+        this.ctx.roundRect(x, y, w, h, nodeBorderRadius).stroke();
+    }
+
+    shadowRect(x, y, w, h, repeats, color) {
+        // set stroke & shadow to the same color
+        this.ctx.strokeStyle = color;
+        this.ctx.shadowColor = color;
+        // set initial blur of 3px
+        this.ctx.shadowBlur = 12;
+        // repeatedly overdraw the blur to make it prominent
+        for (let i = 0; i < repeats; i++) {
+            // increase the size of blur
+            this.ctx.shadowBlur += 0.25;
+            // stroke the rect (which also draws its shadow)
+            this.ctx.roundRect(x, y, w, h, nodeBorderRadius).stroke();
+        }
+        this.ctx.shadowBlur = 0;
+    }
+
     clear(w = this.width, h = this.height, x = 0, y = 0) {
         this.ctx.clearRect(x, y, w, h - 1);
         this.setCtxColor(this.styles.backgroundColor);
-        this.ctx.fillRect(x, y, w, h);
-
+        this.fillRect(x, y, w, h);
         this.emit('clear');
     }
 
@@ -214,20 +320,20 @@ export class BasicRenderEngine extends EventEmitter {
         return x - currentPos;
     }
 
-    addRectToRenderQueue(color: string, x: number, y: number, w: number) {
+    addRectToRenderQueue(color: string, x: number, y: number, w: number, flags: any) {
         if (!this.rectRenderQueue[color]) {
             this.rectRenderQueue[color] = [];
         }
 
-        this.rectRenderQueue[color].push({ x, y, w });
+        this.rectRenderQueue[color].push({ x, y, w, flags });
     }
 
-    addTextToRenderQueue(text: string, x: number, y: number, w: number) {
+    addTextToRenderQueue(text: string, x: number, y: number, w: number, color: string, flags: any) {
         if (text) {
-            const textMaxWidth = w - (this.blockPaddingLeftRight * 2 - (x < 0 ? x : 0));
+            const textMaxWidth = w - (this.blockPaddingLeftRight * 2 - (x < 0 ? x : 0)) - 5;
 
             if (textMaxWidth > 0) {
-                this.textRenderQueue.push({ text, x, y, w, textMaxWidth });
+                this.textRenderQueue.push({ text, x, y, w, textMaxWidth, color, flags });
             }
         }
     }
@@ -240,17 +346,17 @@ export class BasicRenderEngine extends EventEmitter {
         Object.entries(this.rectRenderQueue).forEach(([color, items]) => {
             this.setCtxColor(color);
 
-            items.forEach(({ x, y, w }) => this.renderBlock(color, x, y, w));
+            items.forEach(({ x, y, w, flags }) => this.renderBlock(color, x, y, w, flags));
         });
 
         this.rectRenderQueue = {};
     }
 
     resolveTextRenderQueue() {
-        this.setCtxColor(this.styles.fontColor);
-
-        this.textRenderQueue.forEach(({ text, x, y, textMaxWidth }) => {
+        this.textRenderQueue.forEach(({ text, x, y, textMaxWidth, flags }) => {
             const { width: textWidth } = this.ctx.measureText(text);
+            const fontColor = flags & FRAME_FLAG_IS_INACTIVE ? this.styles.fontColorInactive : this.styles.fontColor;
+            this.setCtxColor(fontColor);
 
             if (textWidth > textMaxWidth) {
                 const avgCharWidth = textWidth / text.length;
@@ -266,13 +372,22 @@ export class BasicRenderEngine extends EventEmitter {
                     text = '';
                 }
             }
-
             if (text) {
-                this.ctx.fillText(
-                    text,
-                    (x < 0 ? 0 : x) + this.blockPaddingLeftRight,
-                    y + this.blockHeight - this.blockPaddingTopBottom
-                );
+                if (text === 'All') {
+                    this.setCtxColor('#ffffff');
+                    this.ctx.fillText(
+                        text,
+                        (x < 0 ? 0 : x) + this.blockPaddingLeftRight,
+                        y + this.blockHeight - this.blockPaddingTopBottom
+                    );
+                    this.setCtxColor(this.styles.fontColor);
+                } else {
+                    this.ctx.fillText(
+                        text,
+                        (x < 0 ? 0 : x) + this.blockPaddingLeftRight,
+                        y + this.blockHeight - this.blockPaddingTopBottom
+                    );
+                }
             }
         });
 
@@ -300,6 +415,9 @@ export class BasicRenderEngine extends EventEmitter {
 
     getTimeUnits() {
         return this.timeUnits;
+    }
+    getInverted() {
+        return this.inverted;
     }
 
     tryToChangePosition(positionDelta: number) {
@@ -417,6 +535,35 @@ export class BasicRenderEngine extends EventEmitter {
                 mouseY + this.blockHeight - this.blockPaddingTopBottom + (this.charHeight + 2) * index
             );
         });
+    }
+
+    renderOuterNodeMask(fields) {
+        this.ctx.shadowBlur = 12;
+        this.ctx.shadowColor = 'rgba(255,255,255,0)';
+        const { x, y, w } = fields;
+        this.setCtxColor('rgba(255,255,255,0.3)');
+        this.ctx.fillRect(0, 0, x, this.height);
+        this.ctx.fillRect(x + w, 0, this.width - x - w, this.height);
+        this.ctx.fillRect(x - 0.1, 0, w + 0.2, y);
+
+        //render 'selected mark' on the selected node
+        this.setCtxColor('#373A4A');
+        this.fillRect(x, y, 3.5, this.blockHeight);
+        this.drawTriangleMark(fields);
+    }
+
+    drawTriangleMark(fields) {
+        const { x, y, w } = fields;
+        this.ctx.beginPath();
+        this.ctx.moveTo(x + w + 5, y + this.blockHeight / 2);
+        this.ctx.lineTo(x + w + 15, y + 4);
+        this.ctx.lineTo(x + w + 15, y - 4 + this.blockHeight);
+        this.ctx.fill();
+    }
+
+    renderNodeStrokeFromData(fields) {
+        const { color, x, y, w, h } = fields;
+        this.shadowRect(x, y, w, h, 1, color);
     }
 
     renderShape(color: string, dots: Dots, posX: number, posY: number) {

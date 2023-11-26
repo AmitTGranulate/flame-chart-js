@@ -23,7 +23,7 @@ export class SeparatedInteractionsEngine extends EventEmitter {
 
         renderEngine.on('clear', () => this.clearHitRegions());
 
-        ['down', 'up', 'move', 'click', 'select'].forEach((eventName) =>
+        ['down', 'up', 'move', 'click', 'double'].forEach((eventName) =>
             parent.on(eventName, (region, mouse, isClick) => {
                 if (!region || region.id === this.id) {
                     this.resend(eventName, region, mouse, isClick);
@@ -39,11 +39,23 @@ export class SeparatedInteractionsEngine extends EventEmitter {
             })
         );
 
+        ['mouseright'].forEach((eventName) =>
+            parent.on(eventName, (region, mouse) => {
+                this.emit(eventName, region, mouse);
+            })
+        );
+
         parent.on('change-position', (data, startMouse, endMouse, instance) => {
             if (instance === this) {
                 this.emit('change-position', data, startMouse, endMouse);
             }
         });
+
+        ['mouseout'].forEach((eventName) =>
+            parent.on(eventName, (mouse) => {
+                this.emit(eventName, mouse);
+            })
+        );
 
         this.hitRegions = [];
     }

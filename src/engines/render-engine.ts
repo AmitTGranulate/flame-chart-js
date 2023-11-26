@@ -1,15 +1,11 @@
-import { TimeGrid } from './time-grid';
 import { BasicRenderEngine, RenderSettings } from './basic-render-engine';
 import { OffscreenRenderEngine } from './offscreen-render-engine';
 import { isNumber } from '../utils';
 import UIPlugin from '../plugins/ui-plugin';
 
-const MAX_ACCURACY = 6;
-
 export type RenderEngineArgs = {
     canvas: HTMLCanvasElement;
     settings: RenderSettings;
-    timeGrid: TimeGrid;
     plugins: UIPlugin[];
 };
 
@@ -22,21 +18,17 @@ export class RenderEngine extends BasicRenderEngine {
     plugins: UIPlugin[];
     children: OffscreenRenderEngine[];
     requestedRenders: number[];
-    timeGrid: TimeGrid;
     freeSpace: number;
     lastPartialAnimationFrame: number | null;
     lastGlobalAnimationFrame: number | null;
 
-    constructor({ canvas, settings, timeGrid, plugins }: RenderEngineArgs) {
+    constructor({ canvas, settings, plugins }: RenderEngineArgs) {
         super(canvas, settings);
 
         this.plugins = plugins;
 
         this.children = [];
         this.requestedRenders = [];
-
-        this.timeGrid = timeGrid;
-        this.timeGrid.setDefaultRenderEngine(this);
     }
 
     makeInstance() {
@@ -67,10 +59,6 @@ export class RenderEngine extends BasicRenderEngine {
             .reduce((acc, max) => Math.max(acc, max));
 
         this.setMinMax(min, max);
-    }
-
-    calcTimeGrid() {
-        this.timeGrid.recalc();
     }
 
     override setMinMax(min: number, max: number) {
@@ -186,19 +174,11 @@ export class RenderEngine extends BasicRenderEngine {
         ).result;
     }
 
-    getAccuracy() {
-        return this.timeGrid.accuracy;
-    }
-
     override setZoom(zoom: number) {
-        if (this.getAccuracy() < MAX_ACCURACY || zoom <= this.zoom) {
-            super.setZoom(zoom);
-            this.children.forEach((engine) => engine.setZoom(zoom));
+        super.setZoom(zoom);
+        this.children.forEach((engine) => engine.setZoom(zoom));
 
-            return true;
-        }
-
-        return false;
+        return true;
     }
 
     override setPositionX(x: number) {
@@ -214,12 +194,15 @@ export class RenderEngine extends BasicRenderEngine {
 
         engine?.clear();
 
-        if (!engine.collapsed) {
-            const isFullRendered = plugin?.render?.();
+        const isFullRendered = plugin?.render?.();
 
-            if (!isFullRendered) {
-                engine.standardRender();
-            }
+        if (!isFullRendered) {
+            engine.standardRender();
+            this.plugins.forEach((plugin) => {
+                if (plugin.renderSelectedNodeMask) {
+                    plugin.renderSelectedNodeMask();
+                }
+            });
         }
     }
 
@@ -244,8 +227,6 @@ export class RenderEngine extends BasicRenderEngine {
     shallowRender() {
         this.clear();
 
-        this.timeGrid.renderLines(this.height - this.freeSpace, this.freeSpace);
-
         this.children.forEach((engine) => {
             if (!engine.collapsed) {
                 this.copy(engine);
@@ -259,6 +240,9 @@ export class RenderEngine extends BasicRenderEngine {
 
             if (plugin.renderTooltip) {
                 tooltipRendered = tooltipRendered || Boolean(plugin.renderTooltip());
+            }
+            if (plugin.renderNodeStroke) {
+                plugin.renderNodeStroke();
             }
         });
 
@@ -278,8 +262,6 @@ export class RenderEngine extends BasicRenderEngine {
 
         if (!this.lastGlobalAnimationFrame) {
             this.lastGlobalAnimationFrame = requestAnimationFrame(() => {
-                this.timeGrid.recalc();
-
                 this.children.forEach((engine, index) => this.renderPlugin(index));
 
                 this.shallowRender();

@@ -1,17 +1,10 @@
 import FlameChartContainer, { FlameChartContainerSettings } from './flame-chart-container';
-import TimeGridPlugin, { TimeGridPluginStyles } from './plugins/time-grid-plugin';
-import TimeframeSelectorPlugin, { TimeframeSelectorPluginStyles } from './plugins/timeframe-selector-plugin';
-import WaterfallPlugin, { WaterfallPluginStyles } from './plugins/waterfall-plugin';
-import TogglePlugin, { TogglePluginStyles } from './plugins/toggle-plugin';
+import { TogglePluginStyles } from './plugins/toggle-plugin';
 import FlameChartPlugin from './plugins/flame-chart-plugin';
-import MarksPlugin from './plugins/marks-plugin';
 import { Colors, Data, Marks, Waterfall } from './types';
 import UIPlugin from './plugins/ui-plugin';
 
 export type FlameChartStyles = {
-    timeGridPlugin?: Partial<TimeGridPluginStyles>;
-    timeframeSelectorPlugin?: Partial<TimeframeSelectorPluginStyles>;
-    waterfallPlugin?: Partial<WaterfallPluginStyles>;
     togglePlugin?: Partial<TogglePluginStyles>;
 };
 
@@ -35,63 +28,27 @@ export type FlameChartOptions = {
 const defaultSettings: FlameChartSettings = {};
 
 export default class FlameChart extends FlameChartContainer<FlameChartStyles> {
-    setData: (data: Data) => void;
+    setData: (data: Data, keepYposition, newYPosition, resetSelected) => void;
     setMarks: (data: Marks) => void;
     setWaterfall: (data: Waterfall) => void;
     setFlameChartPosition: ({ x, y }: { x: number; y: number }) => void;
 
-    constructor({
-        canvas,
-        data,
-        marks,
-        waterfall,
-        colors,
-        settings = defaultSettings,
-        plugins = [],
-    }: FlameChartOptions) {
+    constructor({ canvas, data, colors, settings = defaultSettings, plugins = [] }: FlameChartOptions) {
         const activePlugins: UIPlugin[] = [];
-        const { headers: { waterfall: waterfallName = 'waterfall', flameChart: flameChartName = 'flame chart' } = {} } =
-            settings;
-        const styles = settings?.styles ?? ({} as FlameChartSettings['styles']);
 
-        const timeGridPlugin = new TimeGridPlugin({ styles: styles?.timeGridPlugin });
-
-        activePlugins.push(timeGridPlugin);
-
-        let marksPlugin: MarksPlugin | undefined;
-        let waterfallPlugin: WaterfallPlugin | undefined;
-        let timeframeSelectorPlugin: TimeframeSelectorPlugin | undefined;
         let flameChartPlugin: FlameChartPlugin | undefined;
 
-        if (marks) {
-            marksPlugin = new MarksPlugin(marks);
-            marksPlugin.on('select', (node, type) => this.emit('select', node, type));
-
-            activePlugins.push(marksPlugin);
-        }
-
-        if (waterfall) {
-            waterfallPlugin = new WaterfallPlugin(waterfall, { styles: styles?.waterfallPlugin });
-            waterfallPlugin.on('select', (node, type) => this.emit('select', node, type));
-
-            if (data) {
-                activePlugins.push(new TogglePlugin(waterfallName, { styles: styles?.togglePlugin }));
-            }
-
-            activePlugins.push(waterfallPlugin);
-        }
-
         if (data) {
-            timeframeSelectorPlugin = new TimeframeSelectorPlugin(data, { styles: styles?.timeframeSelectorPlugin });
             flameChartPlugin = new FlameChartPlugin({ data, colors });
-            flameChartPlugin.on('select', (node, type) => this.emit('select', node, type));
+            //flameChartPlugin.on('select', (node, type) => this.emit('select', node, type));
+            flameChartPlugin.on('mousedown', (node, type) => this.emit('mousedown', node, type));
+            flameChartPlugin.on('mouseup', (node, type) => this.emit('mouseup', node, type));
+            flameChartPlugin.on('mouseout', (mouse) => this.emit('mouseout', mouse));
 
-            if (waterfall) {
-                activePlugins.push(new TogglePlugin(flameChartName, { styles: styles?.togglePlugin }));
-            }
+            flameChartPlugin.on('dblclick', (mouse) => this.emit('dblclick', mouse));
+            flameChartPlugin.on('rightClick', (node, mouse) => this.emit('rightClick', node, mouse));
 
             activePlugins.push(flameChartPlugin);
-            activePlugins.unshift(timeframeSelectorPlugin);
         }
 
         super({
@@ -100,14 +57,10 @@ export default class FlameChart extends FlameChartContainer<FlameChartStyles> {
             plugins: [...activePlugins, ...plugins],
         });
 
-        if (flameChartPlugin && timeframeSelectorPlugin) {
-            this.setData = (data) => {
+        if (flameChartPlugin) {
+            this.setData = (data, keepYposition = false, newYPosition = 0, resetSelected = true) => {
                 if (flameChartPlugin) {
-                    flameChartPlugin.setData(data);
-                }
-
-                if (timeframeSelectorPlugin) {
-                    timeframeSelectorPlugin.setData(data);
+                    flameChartPlugin.setData(data, keepYposition, newYPosition, resetSelected);
                 }
             };
 
@@ -121,22 +74,6 @@ export default class FlameChart extends FlameChartContainer<FlameChartStyles> {
                 }
 
                 this.renderEngine.render();
-            };
-        }
-
-        if (marksPlugin) {
-            this.setMarks = (data) => {
-                if (marksPlugin) {
-                    marksPlugin.setMarks(data);
-                }
-            };
-        }
-
-        if (waterfallPlugin) {
-            this.setWaterfall = (data) => {
-                if (waterfallPlugin) {
-                    waterfallPlugin.setData(data);
-                }
             };
         }
     }

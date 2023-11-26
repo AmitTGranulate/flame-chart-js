@@ -14,6 +14,11 @@ export interface Node {
     type?: string; // node type (use it for custom colorization)
     color?: string; // node color (use it for current node colorization)
     children?: Array<Node>; // node children (same structure as for node)
+    specialType?: string;
+    isThirdParty?: boolean;
+    isHighlighted?: boolean;
+    isInactive?: boolean;
+    matched?: boolean;
 }
 
 export type Data = Array<Node>;
@@ -47,6 +52,7 @@ export type Colors = Record<string, string>;
 export interface Mouse {
     x: number;
     y: number;
+    isInsideFg?: boolean;
 }
 
 interface Dot {
@@ -59,6 +65,7 @@ interface Rect {
     x: number;
     y: number;
     w: number;
+    flags: number;
 }
 export interface RectRenderQueue {
     [color: string]: Rect[];
@@ -70,6 +77,8 @@ export interface Text {
     y: number;
     w: number;
     textMaxWidth: number;
+    color?: string;
+    flags: number;
 }
 
 export interface Stroke {
@@ -104,6 +113,10 @@ export interface ClusterizedFlatTreeNode {
     color?: string;
     level: number;
     nodes: FlatTreeNode[];
+    specialType?: string;
+    isThirdParty?: boolean;
+    isHighlighted: boolean;
+    isInactive: boolean;
 }
 
 export type ClusterizedFlatTree = ClusterizedFlatTreeNode[];

@@ -17,6 +17,7 @@ import {
 } from '../types';
 import { OffscreenRenderEngine } from '../engines/offscreen-render-engine';
 import { SeparatedInteractionsEngine } from '../engines/separated-interactions-engine';
+import { FRAME_FLAG_IS_HIGHLIGHTED, FRAME_FLAG_IS_INACTIVE, FRAME_FLAG_IS_THIRD_PARTY } from '../const';
 
 const DEFAULT_COLOR = Color.hsl(180, 30, 70);
 
@@ -24,6 +25,8 @@ export default class FlameChartPlugin extends UIPlugin {
     name = 'flameChartPlugin';
 
     height: number;
+    canvasHeight: number;
+    withSelectLogic: boolean;
 
     data: Data;
     userColors: Colors;
@@ -44,31 +47,57 @@ export default class FlameChartPlugin extends UIPlugin {
 
         this.data = data;
         this.userColors = colors;
+        this.canvasHeight = 5000;
+        this.withSelectLogic = true;
 
         this.parseData();
-        this.reset();
+        this.reset(true, 0, false);
     }
 
     override init(renderEngine: OffscreenRenderEngine, interactionsEngine: SeparatedInteractionsEngine) {
         super.init(renderEngine, interactionsEngine);
 
         this.interactionsEngine.on('change-position', this.handlePositionChange.bind(this));
-        this.interactionsEngine.on('select', this.handleSelect.bind(this));
+        this.interactionsEngine.on('click', this.handleSelect.bind(this));
         this.interactionsEngine.on('hover', this.handleHover.bind(this));
         this.interactionsEngine.on('up', this.handleMouseUp.bind(this));
+        this.interactionsEngine.on('mouseout', this.handleMouseOut.bind(this));
+        this.interactionsEngine.on('double', this.handleMouseDbClick.bind(this));
+        this.interactionsEngine.on('mouseright', this.handleMouseRightClick.bind(this));
+        this.toggleSelectLogic = this.toggleSelectLogic.bind(this);
 
         this.initData();
+    }
+
+    override toggleSelectLogic(selectLogic) {
+        this.withSelectLogic = selectLogic;
+    }
+
+    handleMouseOut() {
+        this.emit('mouseout', {});
+    }
+
+    handleMouseDbClick() {
+        this.interactionsEngine.clearCursor();
+        if (this.selectedRegion && this.selectedRegion.data) {
+            this.emit(
+                'dblclick',
+                this.selectedRegion ? { ...this.selectedRegion.data, ...this.selectedRegion.data.source } : {},
+                'flame-chart-node'
+            );
+        }
     }
 
     handlePositionChange({ deltaX, deltaY }: { deltaX: number; deltaY: number }) {
         const startPositionY = this.positionY;
         const startPositionX = this.renderEngine.parent.positionX;
-
         this.interactionsEngine.setCursor('grabbing');
+        const inverted = this.renderEngine.getInverted();
 
-        if (this.positionY + deltaY >= 0) {
-            this.setPositionY(this.positionY + deltaY);
-        } else {
+        const changeToPosition = !inverted ? this.positionY + deltaY : this.positionY - deltaY;
+        if (changeToPosition >= 0 && changeToPosition < this.canvasHeight) {
+            this.setPositionY(changeToPosition);
+        } else if (changeToPosition < 0) {
             this.setPositionY(0);
         }
 
@@ -79,20 +108,41 @@ export default class FlameChartPlugin extends UIPlugin {
         }
     }
 
-    handleMouseUp() {
+    handleMouseUp(hoveredRegion, mouse, isClick) {
         this.interactionsEngine.clearCursor();
+        if (isClick && this.selectedRegion && this.selectedRegion.data) {
+            this.emit(
+                'mouseup',
+                this.selectedRegion ? { ...this.selectedRegion.data, ...this.selectedRegion.data.source } : {},
+                'flame-chart-node'
+            );
+        }
+    }
+
+    handleMouseRightClick(region, mouse) {
+        this.interactionsEngine.clearCursor();
+        const selectedRegion = region ? this.findNodeInCluster(region) : null;
+
+        this.emit(
+            'rightClick',
+            selectedRegion ? { ...selectedRegion.data, ...selectedRegion.data.source } : undefined,
+            mouse
+        );
     }
 
     setPositionY(y: number) {
         this.positionY = y;
     }
 
-    reset() {
+    reset(keepYposition: boolean, newYPosition: number, resetSelected: boolean) {
         this.colors = {};
         this.lastRandomColor = DEFAULT_COLOR;
-
-        this.positionY = 0;
-        this.selectedRegion = null;
+        if (!keepYposition) {
+            this.positionY = newYPosition;
+        }
+        if (resetSelected) {
+            this.selectedRegion = null;
+        }
     }
 
     calcMinMax() {
@@ -105,14 +155,24 @@ export default class FlameChartPlugin extends UIPlugin {
     }
 
     handleSelect(region) {
-        const selectedRegion = this.findNodeInCluster(region);
-
+        const selectedRegion = region ? this.findNodeInCluster(region) : null;
         if (this.selectedRegion !== selectedRegion) {
             this.selectedRegion = selectedRegion;
+            if (selectedRegion && selectedRegion.data) {
+                const { end } = selectedRegion.data;
+                const { start } = selectedRegion.data.source;
 
-            this.renderEngine.render();
+                const zoom = this.renderEngine.width / (end - start);
 
-            this.emit('select', this.selectedRegion?.data, 'flame-chart-node');
+                if (this.withSelectLogic) {
+                    this.renderEngine.setPositionX(start);
+                    this.renderEngine.setZoom(zoom);
+                }
+            }
+            if (this.withSelectLogic) {
+                this.renderEngine.render();
+            }
+            this.emit('mousedown', this.selectedRegion && this.selectedRegion.data, 'flame-chart-node');
         }
     }
 
@@ -124,6 +184,11 @@ export default class FlameChartPlugin extends UIPlugin {
         const mouse = this.interactionsEngine.getMouse();
 
         if (region && region.type === 'cluster') {
+            if (this.withSelectLogic) {
+                this.interactionsEngine.setCursor('pointer');
+            } else {
+                this.interactionsEngine.setCursor('cell');
+            }
             const hoveredNode = region.data.nodes.find(({ level, source: { start, duration } }) => {
                 const { x, y, w } = this.calcRect(start, duration, level);
 
@@ -136,38 +201,54 @@ export default class FlameChartPlugin extends UIPlugin {
                     type: 'node',
                 };
             }
+        } else {
+            this.interactionsEngine.clearCursor();
         }
         return null;
     }
 
-    getColor(type: string = '_default', defaultColor?: string) {
-        if (defaultColor) {
-            return defaultColor;
-        } else if (this.colors[type]) {
-            return this.colors[type];
-        } else if (this.userColors[type]) {
-            const color = new Color(this.userColors[type]);
-
-            this.colors[type] = color.rgb().toString();
-
-            return this.colors[type];
-        }
-        this.lastRandomColor = this.lastRandomColor.rotate(27);
-        this.colors[type] = this.lastRandomColor.rgb().toString();
-
-        return this.colors[type];
+    createNewColors(type, isWithFaded) {
+        const color = new Color(this.userColors[type]);
+        const colorFaded = new Color(this.userColors[type]).alpha(0.2);
+        this.colors[type] = color.rgb().toString();
+        this.colors[type + '_f'] = colorFaded.rgb().toString();
+        return this.colors[type + isWithFaded];
     }
 
-    setData(data: Data) {
-        this.data = data;
+    getColor(type, specialType, defaultColor, isFaded) {
+        const isWithFaded = isFaded ? '_f' : '';
+        if (defaultColor) {
+            return defaultColor;
+        } else if (specialType) {
+            if (this.colors[specialType]) {
+                return this.colors[specialType + isWithFaded];
+            } else if (this.userColors[specialType]) {
+                return this.createNewColors(specialType, isWithFaded);
+            }
+        } else if (this.colors[type]) {
+            return this.colors[type + isWithFaded];
+        } else if (this.userColors[type]) {
+            return this.createNewColors(type, isWithFaded);
+        } else {
+            this.lastRandomColor = this.lastRandomColor.rotate(27);
+            this.colors[type] = this.lastRandomColor.rgb().toString();
+            return this.colors[type];
+        }
+    }
 
+    setData(data: Data, keepYposition: boolean, newYPosition: number, resetSelected: boolean) {
+        this.data = data;
+        if (Array.isArray(data)) {
+            this.canvasHeight = this.getFlamegraphHeight(data[0]) * this.renderEngine.blockHeight + 50;
+        }
         this.parseData();
         this.initData();
-
-        this.reset();
+        this.reset(keepYposition, newYPosition, resetSelected);
 
         this.renderEngine.recalcMinMax();
-        this.renderEngine.resetParentView();
+        if (resetSelected) {
+            this.renderEngine.resetParentView();
+        }
     }
 
     parseData() {
@@ -199,10 +280,12 @@ export default class FlameChartPlugin extends UIPlugin {
 
     calcRect(start: number, duration: number, level: number) {
         const w = duration * this.renderEngine.zoom;
+        const offset = level * (this.renderEngine.blockHeight + 1) - this.positionY;
+        const inverted = this.renderEngine.getInverted();
 
         return {
             x: this.renderEngine.timeToPosition(start),
-            y: level * (this.renderEngine.blockHeight + 1) - this.positionY,
+            y: !inverted ? offset : this.renderEngine.height - offset - this.renderEngine.blockHeight,
             w: w <= 0.1 ? 0.1 : w >= 3 ? w - 1 : w - w / 3,
         };
     }
@@ -246,6 +329,44 @@ export default class FlameChartPlugin extends UIPlugin {
         return false;
     }
 
+    override renderNodeStroke() {
+        if (this.hoveredRegion && this.hoveredRegion.type === 'node') {
+            const { level: hoveredLevel } = this.hoveredRegion.data;
+            const { start: hoveredStart, duration: hoveredDuration } = this.hoveredRegion.data.source;
+            const { x, y, w } = this.calcRect(hoveredStart, hoveredDuration, hoveredLevel);
+            this.renderEngine.renderNodeStrokeFromData({
+                x,
+                y,
+                w,
+                h: this.renderEngine.blockHeight,
+                color: 'rgba(55, 58, 74,0.7)',
+            });
+        }
+    }
+
+    override renderSelectedNodeMask() {
+        if (this.selectedRegion && this.selectedRegion.type === 'node') {
+            const { level } = this.selectedRegion.data;
+            const { start, duration } = this.selectedRegion.data.source;
+
+            const { x, y, w } = this.calcRect(start, duration, level);
+            this.renderEngine.renderOuterNodeMask({
+                x,
+                y,
+                w,
+                h: this.renderEngine.blockHeight,
+                color: 'rgba(55, 58, 74,0.7)',
+            });
+        }
+    }
+
+    getFlamegraphHeight(flamegraphObject, level = 0) {
+        if (flamegraphObject?.children?.length > 0) {
+            return Math.max(...flamegraphObject.children.map((child) => this.getFlamegraphHeight(child, level + 1)));
+        }
+        return level;
+    }
+
     override render() {
         const { width, blockHeight, height, minTextWidth } = this.renderEngine;
         this.lastUsedColor = null;
@@ -262,19 +383,32 @@ export default class FlameChartPlugin extends UIPlugin {
         };
 
         const renderCluster = (cluster: ClusterizedFlatTreeNode, x: number, y: number, w: number) => {
-            const { type, nodes, color } = cluster;
+            const { type, specialType, nodes, color, isThirdParty, isHighlighted, isInactive } = cluster;
+            let flags = 0;
+
+            if (isThirdParty) {
+                flags |= FRAME_FLAG_IS_THIRD_PARTY;
+            }
+            if (isHighlighted) {
+                flags |= FRAME_FLAG_IS_HIGHLIGHTED;
+            }
+            if (isInactive) {
+                flags |= FRAME_FLAG_IS_INACTIVE;
+            }
+
             const mouse = this.interactionsEngine.getMouse();
 
             if (mouse.y >= y && mouse.y <= y + blockHeight) {
                 addHitRegion(cluster, x, y, w);
             }
+            const calculatedColor = this.getColor(type, specialType, color, isInactive);
 
             if (w >= 0.25) {
-                this.renderEngine.addRectToRenderQueue(this.getColor(type, color), x, y, w);
+                this.renderEngine.addRectToRenderQueue(calculatedColor, x, y, w, flags);
             }
 
             if (w >= minTextWidth && nodes.length === 1) {
-                this.renderEngine.addTextToRenderQueue(nodes[0].source.name, x, y, w);
+                this.renderEngine.addTextToRenderQueue(nodes[0].source.name, x, y, w, calculatedColor, flags);
             }
         };
 
@@ -283,16 +417,6 @@ export default class FlameChartPlugin extends UIPlugin {
         };
 
         this.actualClusterizedFlatTree.forEach(processCluster(renderCluster));
-
-        if (this.selectedRegion && this.selectedRegion.type === 'node') {
-            const {
-                source: { start, duration },
-                level,
-            } = this.selectedRegion.data;
-            const { x, y, w } = this.calcRect(start, duration, level);
-
-            this.renderEngine.addStrokeToRenderQueue('green', x, y, w, this.renderEngine.blockHeight);
-        }
 
         clearTimeout(this.renderChartTimeout);
 

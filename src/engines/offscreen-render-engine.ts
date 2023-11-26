@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
 import { mergeObjects } from '../utils';
 import { RenderSettings, BasicRenderEngine } from './basic-render-engine';
 import { RenderEngine } from './render-engine';
@@ -115,34 +116,25 @@ export class OffscreenRenderEngine extends BasicRenderEngine {
         return this.parent.getTimeUnits();
     }
 
+    override getInverted() {
+        return this.parent.getInverted();
+    }
+
     getAccuracy() {
-        return this.parent.timeGrid.accuracy;
-    }
-
-    renderTimeGrid() {
-        this.parent.timeGrid.renderLines(0, this.height, this);
-    }
-
-    renderTimeGridTimes() {
-        this.parent.timeGrid.renderTimes(this);
+        return 0;
     }
 
     standardRender() {
         this.resolveRectRenderQueue();
         this.resolveTextRenderQueue();
         this.resolveStrokeRenderQueue();
-        //this.renderTimeGrid();
-    }
-
-    renderNodeStrokeFromData(fields) {
-        this.parent.renderNodeStrokeFromData(fields);
     }
 
     override renderTooltipFromData(fields: TooltipField[], mouse: Mouse) {
         this.parent.renderTooltipFromData(fields, mouse);
     }
 
-    renderNodeStrokeFromData(fields) {
+    override renderNodeStrokeFromData(fields) {
         this.parent.renderNodeStrokeFromData(fields);
     }
 

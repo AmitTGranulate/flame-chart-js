@@ -1,12 +1,11 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
 import { RenderEngine } from './engines/render-engine';
 import { InteractionsEngine } from './engines/interactions-engine';
-import { EventEmitter } from 'events';
-import { TimeGrid, TimeGridStyles } from './engines/time-grid';
+import { EventEmitter, Listener } from 'events';
 import { RenderOptions, RenderStyles } from './engines/basic-render-engine';
 import UIPlugin from './plugins/ui-plugin';
 
 export type FlameChartContainerStyles<Styles> = {
-    timeGrid?: Partial<TimeGridStyles>;
     main?: Partial<RenderStyles>;
 } & Styles;
 
@@ -25,14 +24,12 @@ export default class FlameChartContainer<Styles> extends EventEmitter {
     renderEngine: RenderEngine;
     interactionsEngine: InteractionsEngine;
     plugins: UIPlugin[];
-    timeGrid: TimeGrid;
 
     constructor({ canvas, plugins, settings }: FlameChartContainerOptions<Styles>) {
         super();
 
         const styles = settings?.styles ?? ({} as typeof settings.styles);
 
-        this.timeGrid = new TimeGrid({ styles: styles?.timeGrid });
         this.renderEngine = new RenderEngine({
             canvas,
             settings: {
@@ -40,7 +37,6 @@ export default class FlameChartContainer<Styles> extends EventEmitter {
                 options: settings.options,
             },
             plugins,
-            timeGrid: this.timeGrid,
         });
         this.interactionsEngine = new InteractionsEngine(canvas, this.renderEngine);
         this.plugins = plugins;
@@ -61,7 +57,6 @@ export default class FlameChartContainer<Styles> extends EventEmitter {
         this.renderEngine.calcMinMax();
         this.renderEngine.resetView();
         this.renderEngine.recalcChildrenSizes();
-        this.renderEngine.calcTimeGrid();
 
         this.plugins.forEach((plugin) => plugin.postInit?.());
 
@@ -84,16 +79,23 @@ export default class FlameChartContainer<Styles> extends EventEmitter {
             if (this.plugins[index][fnName]) {
                 this.plugins[index][fnName](...args);
             }
-
             index++;
         }
     }
 
     setSettings(settings: FlameChartContainerSettings<Styles>) {
-        this.timeGrid.setSettings({ styles: settings.styles?.timeGrid });
         this.renderEngine.setSettings({ options: settings.options, styles: settings.styles?.main });
         this.plugins.forEach((plugin) => plugin.setSettings?.({ styles: settings.styles?.[plugin.name] }));
         this.renderEngine.render();
+    }
+
+    toggleSelectLogic(toggleSelect: boolean) {
+        this.plugins.forEach((plugin) => plugin.toggleSelectLogic?.(toggleSelect));
+        this.renderEngine.render();
+    }
+    //@ts-ignore
+    override off(type: string | number, listener: Listener) {
+        this.plugins.forEach((plugin) => plugin.off?.(type, listener));
     }
 
     setZoom(start: number, end: number) {

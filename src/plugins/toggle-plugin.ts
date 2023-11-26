@@ -36,7 +36,7 @@ export const defaultTogglePluginStyles: TogglePluginStyles = {
 export default class TogglePlugin extends UIPlugin<TogglePluginStyles> {
     name = 'togglePlugin';
 
-    override styles: TogglePluginStyles;
+    declare styles: TogglePluginStyles;
     height: number;
 
     title: string;
@@ -142,7 +142,7 @@ export default class TogglePlugin extends UIPlugin<TogglePluginStyles> {
         this.renderEngine.fillRect(0, 0, this.renderEngine.width, this.styles.height);
 
         this.renderEngine.setCtxColor(this.styles.fontColor);
-        this.renderEngine.addTextToRenderQueue(this.title, triangleFullWidth, 0, this.renderEngine.width);
+        this.renderEngine.addTextToRenderQueue(this.title, triangleFullWidth, 0, this.renderEngine.width, '#000000', 0);
         this.renderEngine.renderTriangle(
             this.styles.triangleColor,
             this.styles.leftPadding,

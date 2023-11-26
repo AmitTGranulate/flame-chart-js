@@ -10,3 +10,8 @@ export const mergeObjects = <S extends Record<PropertyKey, any>>(defaultStyles: 
     }, {} as S);
 
 export const isNumber = (val: unknown): val is number => typeof val === 'number';
+
+export const addAlpha = (color: string, opacity: number): string => {
+    const _opacity = Math.round(Math.min(Math.max(opacity || 1, 0), 1) * 255);
+    return color + _opacity.toString(16).toUpperCase();
+};

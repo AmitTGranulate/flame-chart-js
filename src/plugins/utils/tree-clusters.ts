@@ -163,6 +163,10 @@ export const clusterizeFlatTree = (
                 type: node.source.type,
                 color: node.source.color,
                 level: node.level,
+                specialType: node.source.specialType,
+                isThirdParty: node.source.isThirdParty,
+                isHighlighted: node.source.isHighlighted || false,
+                isInactive: node.source.matched === false || node.source.isHighlighted === false,
                 nodes,
             };
         });
